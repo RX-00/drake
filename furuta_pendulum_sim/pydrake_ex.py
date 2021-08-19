@@ -10,5 +10,6 @@ Parser(plant).AddModelFromFile(
     FindResourceOrThrow("drake/examples/pendulum/Pendulum.urdf"))
 plant.Finalize()
 diagram = builder.Build()
+print(diagram)
 simulator = Simulator(diagram)
 
