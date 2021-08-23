@@ -124,7 +124,7 @@ def get_A_lin():
     # eq of motion (manipulator form)
     M = np.array([
       [      m_c + m_p,          m_p * l * np.cos(np.pi)],
-      [m_p * l * np.cos(np.pi),         m_p * l**2      ]              
+      [m_p * l * np.cos(np.pi),         m_p * l**2      ]
     ])
     B = np.array([
       [1],
@@ -153,7 +153,7 @@ def get_B_lin():
     # eq of motion (manipulator form)
     M = np.array([
       [      m_c + m_p,          m_p * l * np.cos(np.pi)],
-      [m_p * l * np.cos(np.pi),         m_p * l**2      ]              
+      [m_p * l * np.cos(np.pi),         m_p * l**2      ]
     ])
     B = np.array([
       [1],

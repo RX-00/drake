@@ -1,5 +1,3 @@
-#!/usr/bin/python3 -B
-
 """Provides an example translation of `cart_pole_passive_simluation.cc`."""
 
 import argparse

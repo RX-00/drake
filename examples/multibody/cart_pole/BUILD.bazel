@@ -25,7 +25,8 @@ drake_cc_binary(
     name = "cart_pole_passive_simulation",
     srcs = ["cart_pole_passive_simulation.cc"],
     add_test_rule = 1,
-    data = ["cart_pole.sdf"],
+    #data = ["cart_pole.sdf"],
+    data = ["cartpole.urdf"],
     test_rule_args = [
         "--simulation_time=0.1",
         "--target_realtime_rate=0.0",
