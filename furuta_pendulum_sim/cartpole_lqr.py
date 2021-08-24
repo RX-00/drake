@@ -24,7 +24,7 @@ from pydrake.systems.analysis import Simulator
 from pydrake.systems.planar_scenegraph_visualizer import (
     ConnectPlanarSceneGraphVisualizer, PlanarSceneGraphVisualizer)
 from pydrake.systems.controllers import LinearQuadraticRegulator
-
+from pydrake.all import Linearize
 
 
 def main():
@@ -85,6 +85,17 @@ def main():
     cart_pole.get_actuation_input_port().FixValue(cart_pole_context, [0])
     input_i = cart_pole.get_actuation_input_port().get_index()
     lqr = LinearQuadraticRegulator(cart_pole, cart_pole_context, Q, R, input_port_index=int(input_i))
+
+    # getting the K (ctrlr matrix) and S (cost fxn matrix) matrices
+    output_i = cart_pole.get_state_output_port().get_index()
+    lin_cart_pole = Linearize(cart_pole, cart_pole_context,
+                              input_port_index=input_i, output_port_index=output_i)
+    (K, S) = LinearQuadraticRegulator(lin_cart_pole.A(), lin_cart_pole.B(), Q, R)
+    print("LQR RESULT: ")
+    print(lqr)
+    print(K)
+    print(S)
+
     lqr = builder.AddSystem(lqr)
     # connect actuation
     builder.Connect(cart_pole.get_state_output_port(), lqr.get_input_port(0))

@@ -32,6 +32,24 @@ from pydrake.systems.planar_scenegraph_visualizer import (
 from pydrake.systems.controllers import LinearQuadraticRegulator
 
 
+'''
+TODO:
+ - try a different visualizer (as seen in simple pendulum.py) than PoseBundle in cartpole_lqr.py
+   ex:
+
+/   # Setup visualization
+/   scene_graph = builder.AddSystem(SceneGraph())
+/   PendulumGeometry.AddToBuilder(builder, pendulum.get_state_output_port(), scene_graph)
+/   visualizer = pydrake.systems.meshcat_visualizer.ConnectMeshcatVisualizer(
+/       builder,
+/       scene_graph=scene_graph,
+/       zmq_url=zmq_url)
+/   visualizer.set_planar_viewpoint()
+/   visualizer.vis.delete()
+
+
+'''
+
 
 # Energy Shaping Controller
 '''
