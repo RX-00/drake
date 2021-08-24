@@ -86,7 +86,7 @@ def main():
     input_i = cart_pole.get_actuation_input_port().get_index()
     lqr = LinearQuadraticRegulator(cart_pole, cart_pole_context, Q, R, input_port_index=int(input_i))
 
-    # getting the K (ctrlr matrix) and S (cost fxn matrix) matrices
+    # getting the K (ctrlr matrix) and S (Riccati eq matrix, used in optimal cost-to-go fxn) matrices
     output_i = cart_pole.get_state_output_port().get_index()
     lin_cart_pole = Linearize(cart_pole, cart_pole_context,
                               input_port_index=input_i, output_port_index=output_i)
