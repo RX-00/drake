@@ -79,6 +79,7 @@ def main():
         scene_graph.get_source_pose_port(cart_pole.get_source_id()))
 
     cart_pole_context = cart_pole.CreateDefaultContext()
+    # SETTING PARAMS
     cart_pole_context.get_mutable_continuous_state_vector().SetFromVector(x_star)
 
     cart_pole.get_actuation_input_port().FixValue(cart_pole_context, [0])
