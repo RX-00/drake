@@ -284,14 +284,14 @@ builder.Connect(controller.get_output_port(0), saturation.get_input_port(0))
 
 
 # Setup visualization
-scene_graph = builder.AddSystem(SceneGraph())
-PendulumGeometry.AddToBuilder(builder, pendulum.get_state_output_port(), scene_graph)
-visualizer = pydrake.systems.meshcat_visualizer.ConnectMeshcatVisualizer(
-    builder,
-    scene_graph=scene_graph,
-    zmq_url=zmq_url)
-visualizer.set_planar_viewpoint()
-visualizer.vis.delete()
+#scene_graph = builder.AddSystem(SceneGraph())
+#PendulumGeometry.AddToBuilder(builder, pendulum.get_state_output_port(), scene_graph)
+#visualizer = pydrake.systems.meshcat_visualizer.ConnectMeshcatVisualizer(
+#    builder,
+#    scene_graph=scene_graph,
+#    zmq_url=zmq_url)
+#visualizer.set_planar_viewpoint()
+#visualizer.vis.delete()
 
 '''
 visualizer = pydrake.systems.meshcat_visualizer.ConnectMeshcatVisualizer(
