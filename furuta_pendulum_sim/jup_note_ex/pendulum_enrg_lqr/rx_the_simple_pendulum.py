@@ -237,7 +237,8 @@ class EnergyShapingController(VectorSystem):
       params = self.pendulum_context.get_numeric_parameter(0)
       theta = pendulum_state[0]
       thetadot = pendulum_state[1]
-      total_energy = self.pendulum.EvalPotentialEnergy(self.pendulum_context) + self.pendulum.EvalKineticEnergy(self.pendulum_context)
+      total_energy = (self.pendulum.EvalPotentialEnergy(self.pendulum_context) +
+                      self.pendulum.EvalKineticEnergy(self.pendulum_context))
       output[:] = (params.damping() * thetadot - .1 * thetadot *
                          (total_energy - self.desired_energy))
 
@@ -402,11 +403,10 @@ for i in range(1):
     while not stop_button.value:
       simulator.AdvanceTo(simulator.get_context().get_time() + 1.0)
     stop_button.value = False
-    
+
     #simulator.AdvanceTo(4)
     #
     ax.plot(logger.data()[0, :], logger.data()[1, :])
 
 ax.set_xlim(np.pi - 3., np.pi + 3.)
 ax.set_ylim(-5., 5.)
-

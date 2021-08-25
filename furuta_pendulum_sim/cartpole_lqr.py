@@ -67,7 +67,10 @@ def main():
     cart_pole = builder.AddSystem(MultibodyPlant(time_step=args.time_step))
     cart_pole.RegisterAsSourceForSceneGraph(scene_graph)
     Parser(plant=cart_pole).AddModelFromFile(sdf_path)
+    # users must call Finalize() after making any additions to the multibody plant and before using
+    # this class in the Systems framework, e.g. diagram = builder.Build()
     cart_pole.Finalize()
+
     assert cart_pole.geometry_source_is_registered()
 
     # wire up scene to cart_pole geometry and vice versa
@@ -122,7 +125,7 @@ def main():
     # reset initial time & state
     context = simulator.get_mutable_context()
     context.SetTime(0.)
-    context.SetContinuousState(x0)
+    context.SetContinuousState(x0) # x, theta, xdot, thetadot
 
     # run sim
     simulator.Initialize()
