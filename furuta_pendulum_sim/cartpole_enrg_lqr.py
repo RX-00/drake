@@ -36,19 +36,22 @@ from pydrake.systems.controllers import LinearQuadraticRegulator
 
 '''
 TODO:
- - try a different visualizer (as seen in simple pendulum.py) than PoseBundle in cartpole_lqr.py
-   ex:
+ [ ] try a different visualizer (as seen in simple pendulum.py) than PoseBundle in cartpole_lqr.py
+     ex:
 
-/   # Setup visualization
-/   scene_graph = builder.AddSystem(SceneGraph())
-/   PendulumGeometry.AddToBuilder(builder, pendulum.get_state_output_port(), scene_graph)
-/   visualizer = pydrake.systems.meshcat_visualizer.ConnectMeshcatVisualizer(
-/       builder,
-/       scene_graph=scene_graph,
-/       zmq_url=zmq_url)
-/   visualizer.set_planar_viewpoint()
-/   visualizer.vis.delete()
+/    # Setup visualization
+/    scene_graph = builder.AddSystem(SceneGraph())
+/    PendulumGeometry.AddToBuilder(builder, pendulum.get_state_output_port(), scene_graph)
+/    visualizer = pydrake.systems.meshcat_visualizer.ConnectMeshcatVisualizer(
+/        builder,
+/        scene_graph=scene_graph,
+/        zmq_url=zmq_url)
+/    visualizer.set_planar_viewpoint()
+/    visualizer.vis.delete()
 
+ [ ] test energy shaping controller
+ [ ] test lqr controller
+ [ ] test energy shaping + lqr controller
 
 '''
 
@@ -78,7 +81,7 @@ class EnergyShapingCtrlr(VectorSystem):
         # energy at upright state w/ cart back at origin
         self.desired_energy = self.cart_pole.EvalPotentialEnergy(self.cart_pole_context)
 
-    #
+    # actual controller u (xdotdot in this case)
     def DoCalcVectorOutput(self, context, cart_pole_state, unused, output):
         # set context for current cartpole state
         self.cart_pole_context.SetContinuousState(cart_pole_state)
@@ -122,6 +125,7 @@ class BalancingLQRCtrlr():
                                               input_port_index=input_i,
                                               output_port_index=output_i)
 
+    # lqr controller matrices (K ctrlr matrix, S Riccati eq matrix (used in optimal cost-to-go fxn))
     def BalancingLQR(self):
         (K, S) = LinearQuadraticRegulator(self.linearized_cart_pole.A(),
                                           self.linearized_cart_pole.B(), self.Q, self.R)
@@ -161,7 +165,10 @@ def main():
     output_i = cart_pole.get_state_output_port().get_index()
     (K, S) = BalancingLQRCtrlr(cart_pole, input_i, output_i,
                                Q=np.eye(4), R=np.eye(1)).BalancingLQR() # NOTE: IT WORKS!!!
-    print(K)
+    print("lqr K matrix: ")
+    print(K, "\n")
+    print("lqr S matrix: ")
+    print(S)
     exit(0)
 
 if __name__ == "__main__":
