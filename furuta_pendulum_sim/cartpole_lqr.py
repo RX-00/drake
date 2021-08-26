@@ -7,11 +7,19 @@ LQR controller
 meant to be foundation to a simplified
 furuta pendulum simulator and controller
 
-NOTE: FUCKING WORKS
+based off of cartpole_lqr.py && rx_the_simple_pendulum.py &&
+pydrake bindings example cart_pole_passive_simulation.py
+
+state vector: [x, theta, xdot, thetadot]
 '''
 
 import numpy as np
+import meshcat
 import argparse
+import matplotlib.pyplot as plt
+from copy import copy
+
+from pydrake.all import (Saturation, SignalLogger, wrap_to, VectorSystem, Linearize)
 
 from pydrake.common import FindResourceOrThrow
 from pydrake.common import temp_directory
@@ -24,56 +32,27 @@ from pydrake.systems.analysis import Simulator
 from pydrake.systems.planar_scenegraph_visualizer import (
     ConnectPlanarSceneGraphVisualizer, PlanarSceneGraphVisualizer)
 from pydrake.systems.controllers import LinearQuadraticRegulator
-from pydrake.all import Linearize
+
+
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--target_realtime_rate", type=float, default=1.0,
-        help="Desired rate relative to real time.  See documentation for "
-             "Simulator::set_target_realtime_rate() for details.")
-    parser.add_argument(
-        "--simulation_time", type=float, default=10.0,
-        help="Desired duration of the simulation in seconds.")
-    parser.add_argument(
-        "--time_step", type=float, default=0.,
-        help="If greater than zero, the plant is modeled as a system with "
-             "discrete updates and period equal to this time_step. "
-             "If 0, the plant is modeled as a continuous system.")
-    args = parser.parse_args()
 
     sdf_path = FindResourceOrThrow(
         "drake/examples/multibody/cart_pole/cart_pole.sdf")
 
-    '''
-     simulates cartpole + lqr controller given initial state
-     and params until the given final time. Returns the state
-     sampled at the given tape_period
-
-     x_star = unstable equilibrium point
-     Q = penalize state var, large -> stabilize sys w/ least possible changes in states
-                         small -> less concern about changes in states
-     R = penalize ctrl signal, large -> stabilize sys w/ less (weight) energy (expensive ctrl strat)
-                           small -> penalize the ctrl signal less (cheap ctrl strat, so can use more)
-    '''
-    x_star = [0, np.pi, 0, 0]
-    Q = np.eye(4)
-    R = np.eye(1)
-
-    # start construction site of our block diagram
     builder = DiagramBuilder()
-    scene_graph = builder.AddSystem(SceneGraph()) # visualization and collision checking tool
-    cart_pole = builder.AddSystem(MultibodyPlant(time_step=args.time_step))
+    cart_pole = builder.AddSystem(MultibodyPlant(time_step=0.)) # TODO: time_step=args.time_step
+    scene_graph = builder.AddSystem(SceneGraph()) # visualization & collision checking tool
     cart_pole.RegisterAsSourceForSceneGraph(scene_graph)
     Parser(plant=cart_pole).AddModelFromFile(sdf_path)
-    # users must call Finalize() after making any additions to the multibody plant and before using
-    # this class in the Systems framework, e.g. diagram = builder.Build()
+
+    # users must call Finalize() after making any additions to the multibody plant and
+    # before using this class in the Systems framework, e.g. diagram = builder.Build()
     cart_pole.Finalize()
+    assert cart_pole.geometry_source_is_registered() # NOTE: don't know if need this
 
-    assert cart_pole.geometry_source_is_registered()
-
-    # wire up scene to cart_pole geometry and vice versa
+    # wire up scene_graph and cart_pole geometry
     builder.Connect(
         scene_graph.get_query_output_port(),
         cart_pole.get_geometry_query_input_port())
@@ -81,66 +60,73 @@ def main():
         cart_pole.get_geometry_poses_output_port(),
         scene_graph.get_source_pose_port(cart_pole.get_source_id()))
 
-    cart_pole_context = cart_pole.CreateDefaultContext()
-    # SETTING PARAMS
-    cart_pole_context.get_mutable_continuous_state_vector().SetFromVector(x_star)
+    # hookup //tools:drake_visualizer
+    DrakeVisualizer.AddToBuilder(builder=builder,
+                                 scene_graph=scene_graph)
 
-    cart_pole.get_actuation_input_port().FixValue(cart_pole_context, [0])
+    # ----------------------------------------------------------
+    # cartpole actuation (u) input port
     input_i = cart_pole.get_actuation_input_port().get_index()
-    lqr = LinearQuadraticRegulator(cart_pole, cart_pole_context, Q, R, input_port_index=int(input_i))
-
-    # getting the K (ctrlr matrix) and S (Riccati eq matrix, used in optimal cost-to-go fxn) matrices
+    # cartpole state (x) output port
     output_i = cart_pole.get_state_output_port().get_index()
-    lin_cart_pole = Linearize(cart_pole, cart_pole_context,
-                              input_port_index=input_i, output_port_index=output_i)
-    (K, S) = LinearQuadraticRegulator(lin_cart_pole.A(), lin_cart_pole.B(), Q, R)
-    print("LQR RESULT: ")
-    print(lqr)
-    print(K)
-    print(S)
 
+    # set the ctrlr included cart_pole context
+    cart_pole_context_ = cart_pole.CreateDefaultContext()
+
+    # set the fixed point to linearize around in lqr
+    cart_pole_context_.get_mutable_continuous_state_vector().SetFromVector([0, np.pi, 0, 0])
+
+    cart_pole.get_actuation_input_port().FixValue(cart_pole_context_, [0])
+
+    # create lqr controller
+    lqr = LinearQuadraticRegulator(cart_pole, cart_pole_context_,
+                                   Q=np.eye(4), # large Q->stabilize sys w/ least poss. changes in states
+                                   R=np.eye(1) * 0.1, # small R->cheap ctrl strat (no penalize ctrl signal)
+                                   input_port_index=int(input_i))
     lqr = builder.AddSystem(lqr)
-    # connect actuation
-    builder.Connect(cart_pole.get_state_output_port(), lqr.get_input_port(0))
-    builder.Connect(lqr.get_output_port(0), cart_pole.get_actuation_input_port())
+    # connect/wire up the lqr controller
+    builder.Connect(cart_pole.get_state_output_port(),
+                    lqr.get_input_port(0))
+    builder.Connect(lqr.get_output_port(0),
+                    cart_pole.get_actuation_input_port())
+    # ----------------------------------------------------------
 
-    # add a visualizer & wire it
-    visualizer = builder.AddSystem(
-    PlanarSceneGraphVisualizer(
-        scene_graph, xlim=[-3., 3.], ylim=[-1.2, 1.2], show=True))
-    builder.Connect(scene_graph.get_pose_bundle_output_port(), visualizer.get_input_port(0))
 
-    diagram = builder.Build()
 
-    x0 = [0, np.pi + 0.3, 0, 0]
-    sim_time = 50
+    diagram = builder.Build() # done defining & hooking up the system
+    diagram_context = diagram.CreateDefaultContext()
+
+    # cart_pole context based on controller-less diagram context
+    #cart_pole_context = diagram.GetMutableSubsystemContext(cart_pole,
+    #                                                       diagram_context)
+    # NOTE: uncomment to set actuation to this context w/o lqr
+    #cart_pole.get_actuation_input_port().FixValue(cart_pole_context, [0])
+
 
     # instantiate a simulator
-    simulator = Simulator(diagram)
-    simulator.set_publish_every_time_step(False) # makes sim faster
+    simulator = Simulator(diagram, diagram_context)
+    simulator.set_publish_every_time_step(False) # speed up sim
+    simulator.set_target_realtime_rate(1.0)
 
-    # start recording the video for the animation of the simulation
-    visualizer.start_recording()
+    # sim context, reset initial time & state
+    sim_context = simulator.get_mutable_context()
+    sim_context.SetTime(0.)
+    sim_context.SetContinuousState([0, np.pi + 0.3, 0, 0])
 
-    # reset initial time & state
-    context = simulator.get_mutable_context()
-    context.SetTime(0.)
-    context.SetContinuousState(x0) # x, theta, xdot, thetadot
+    ''' NOTE: another way to set cartpole state
+    cart_slider = cart_pole.GetJointByName("CartSlider")
+    pole_pin = cart_pole.GetJointByName("PolePin")
+    cart_slider.set_translation(context=cart_pole_context, translation=0.)
+    pole_pin.set_angle(context=cart_pole_context, angle=2.)
+    '''
 
-    # run sim
+    # run sim until simulator.AdvanceTo(n) seconds
     simulator.Initialize()
-    simulator.AdvanceTo(sim_time)
+    simulator.AdvanceTo(15.0)
 
-    # stop video
-    visualizer.stop_recording()
 
-    # construct animation
-    animation = visualizer.get_recording_as_animation()
 
-    #display()
-    animation.save("{}/pend_playback.mp4".format(temp_directory()), fps=30)
-
-    visualizer.reset_recoding()
+    exit(0)
 
 
 

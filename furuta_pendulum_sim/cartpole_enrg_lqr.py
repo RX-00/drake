@@ -161,15 +161,62 @@ def main():
     cart_pole.Finalize()
     assert cart_pole.geometry_source_is_registered() # NOTE: don't know if need this
 
+    # cartpole actuation (u) input port
     input_i = cart_pole.get_actuation_input_port().get_index()
+    # cartpole state (x) output port
     output_i = cart_pole.get_state_output_port().get_index()
-    (K, S) = BalancingLQRCtrlr(cart_pole, input_i, output_i,
-                               Q=np.eye(4), R=np.eye(1)).BalancingLQR() # NOTE: IT WORKS!!!
-    print("lqr K matrix: ")
-    print(K, "\n")
-    print("lqr S matrix: ")
-    print(S)
+
+    # wire up scene_graph and cart_pole geometry
+    builder.Connect(
+        scene_graph.get_query_output_port(),
+        cart_pole.get_geometry_query_input_port())
+    builder.Connect(
+        cart_pole.get_geometry_poses_output_port(),
+        scene_graph.get_source_pose_port(cart_pole.get_source_id()))
+
+    # hookup //tools:drake_visualizer
+    DrakeVisualizer.AddToBuilder(builder=builder,
+                                 scene_graph=scene_graph)
+
+    diagram = builder.Build() # done defining & hooking up the system
+
+
+    # create passive cartpole (no ctrlr) diagram_context & cartpole context
+    diagram_context = diagram.CreateDefaultContext()
+    cart_pole_context_passive = diagram.GetMutableSubsystemContext(cart_pole,
+                                                           diagram_context)
+    # set actuation port based on no controller cart_pole_context_passive
+    cart_pole.get_actuation_input_port().FixValue(cart_pole_context_passive, 0)
+
+    # instantiate a simulator
+    simulator = Simulator(diagram, diagram_context)
+    simulator.set_publish_every_time_step(False) # speed up sim
+    simulator.set_target_realtime_rate(1.0)
+
+    # sim context, reset initial time & state
+    sim_context = simulator.get_mutable_context()
+    sim_context.SetTime(0.)
+    sim_context.SetContinuousState([0, 0.1, 0, 0])
+
+    ''' NOTE: another way to set cartpole state
+    cart_slider = cart_pole.GetJointByName("CartSlider")
+    pole_pin = cart_pole.GetJointByName("PolePin")
+    cart_slider.set_translation(context=cart_pole_context, translation=0.)
+    pole_pin.set_angle(context=cart_pole_context, angle=2.)
+    '''
+
+    # run sim until simulator.AdvanceTo(n) seconds
+    simulator.Initialize()
+    simulator.AdvanceTo(10.0)
+
+
+
     exit(0)
+
+
+
+
+
 
 if __name__ == "__main__":
     main()
