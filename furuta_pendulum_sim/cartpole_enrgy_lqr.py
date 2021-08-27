@@ -36,24 +36,13 @@ from pydrake.systems.controllers import LinearQuadraticRegulator
 
 '''
 TODO:
- [ ] try a different visualizer (as seen in simple pendulum.py) than PoseBundle in cartpole_lqr.py
-     ex:
-
-/    # Setup visualization
-/    scene_graph = builder.AddSystem(SceneGraph())
-/    PendulumGeometry.AddToBuilder(builder, pendulum.get_state_output_port(), scene_graph)
-/    visualizer = pydrake.systems.meshcat_visualizer.ConnectMeshcatVisualizer(
-/        builder,
-/        scene_graph=scene_graph,
-/        zmq_url=zmq_url)
-/    visualizer.set_planar_viewpoint()
-/    visualizer.vis.delete()
-
+ [x] try a different visualizer (as seen in simple pendulum.py) than PoseBundle in cartpole_lqr.py
  [ ] test energy shaping controller
- [ ] test lqr controller
+ [x] test lqr controller
  [ ] test energy shaping + lqr controller
 
 '''
+
 
 
 # Energy Shaping Controller
@@ -113,7 +102,7 @@ class BalancingLQRCtrlr():
     # TODO: need input_port, and output_port from
     #       input_i = cart_pole.get_actuation_input_port().get_index()
     #       output_i = cart_pole.get_state_output_port().get_index
-    def __init__(self, cart_pole, input_i, output_i, Q, R):
+    def __init__(self, cart_pole, input_i, output_i, Q=np.eye(4), R=np.eye(1)):
         self.cart_pole = cart_pole
         self.Q = Q
         self.R = R
@@ -126,7 +115,7 @@ class BalancingLQRCtrlr():
                                               output_port_index=output_i)
 
     # lqr controller matrices (K ctrlr matrix, S Riccati eq matrix (used in optimal cost-to-go fxn))
-    def BalancingLQR(self):
+    def get_LQR_matrices(self):
         (K, S) = LinearQuadraticRegulator(self.linearized_cart_pole.A(),
                                           self.linearized_cart_pole.B(), self.Q, self.R)
         return (K, S)
@@ -137,34 +126,75 @@ class BalancingLQRCtrlr():
 # with a simple state machine
 class SwingUpAndBalanceController(VectorSystem):
 
-    def __init__(self, cart_pole):
+    def __init__(self, cart_pole, input_i, ouput_i, Q, R, x_star):
         VectorSystem.__init__(self, 4, 1)
+        (self.K, self.S) = BalancingLQRCtrlr(cart_pole, input_i, ouput_i, Q, R)
+        self.energy_shaping = EnergyShapingCtrlr(cart_pole, x_star)
+        self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
+
+    def DoCalcVectorOutput(self, context, cart_pole_state, unused, ouput):
+        # xbar = x - x_star, i.e. xbar is the difference b/w current state and fixed point
+        xbar = copy(cart_pole_state)
+        # wrap_to(value: float, low: float, high: float) -> float
+        #     For variables that are meant to be periodic, (e.g. over a 2π interval), wraps
+        #     value into the interval [low, high). Precisely, wrap_to returns:
+        #     value + k*(high-low) for the unique integer value k that lands the output
+        #     in the desired interval. low and high must be finite, and low < high.
+        xbar[1] = wrap_to(xbar[1], 0, 2.0*np.pi) - np.pi # theta
+
+        # If x'Sx <= 2, then use LQR ctrlr. Cost-to-go J_star = x^T * S * x
+        if (xbar.dot(self.S.dot(xbar)) < 2.0):
+            output[:] = -self.K.dot(xbar) # u = -Kx
+        else:
+            self.energy_shaping.get_input_port(0).FixValue(self.energy_shaping_context,
+                                                           cart_pole_state)
+            output[:] = self.energy_shaping.get_output_port(0).Eval(self.energy_shaping_context)
 
 
 
+
+
+def arg_parse():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--target_realtime_rate", type=float, default=1.0,
+        help="Desired rate relative to real time.  See documentation for "
+             "Simulator::set_target_realtime_rate() for details.")
+    parser.add_argument(
+        "--simulation_time", type=float, default=10.0,
+        help="Desired duration of the simulation in seconds.")
+    parser.add_argument(
+        "--time_step", type=float, default=0.,
+        help="If greater than zero, the plant is modeled as a system with "
+             "discrete updates and period equal to this time_step. "
+             "If 0, the plant is modeled as a continuous system.")
+    args = parser.parse_args()
+    return args
 
 
 
 def main():
+    args = arg_parse()
 
     sdf_path = FindResourceOrThrow(
         "drake/examples/multibody/cart_pole/cart_pole.sdf")
 
     builder = DiagramBuilder()
-    cart_pole = builder.AddSystem(MultibodyPlant(time_step=0.)) # TODO: time_step=args.time_step
+    cart_pole = builder.AddSystem(MultibodyPlant(time_step=args.time_step))
     scene_graph = builder.AddSystem(SceneGraph()) # visualization & collision checking tool
     cart_pole.RegisterAsSourceForSceneGraph(scene_graph)
     Parser(plant=cart_pole).AddModelFromFile(sdf_path)
+
+    # LQR weights
+    Q = np.eye(4)
+    R = np.eye(1)
+    # fixed (unstable) equilibrium point
+    x_star = [0., np.pi, 0., 0.]
 
     # users must call Finalize() after making any additions to the multibody plant and
     # before using this class in the Systems framework, e.g. diagram = builder.Build()
     cart_pole.Finalize()
     assert cart_pole.geometry_source_is_registered() # NOTE: don't know if need this
-
-    # cartpole actuation (u) input port
-    input_i = cart_pole.get_actuation_input_port().get_index()
-    # cartpole state (x) output port
-    output_i = cart_pole.get_state_output_port().get_index()
 
     # wire up scene_graph and cart_pole geometry
     builder.Connect(
@@ -178,20 +208,32 @@ def main():
     DrakeVisualizer.AddToBuilder(builder=builder,
                                  scene_graph=scene_graph)
 
+    # cartpole actuation (u) input port
+    input_i = cart_pole.get_actuation_input_port().get_index()
+    # cartpole state (x) output port
+    output_i = cart_pole.get_state_output_port().get_index()
+    '''
+
+    Controller code setup & wiring up happens here
+
+    '''
+
+
     diagram = builder.Build() # done defining & hooking up the system
-
-
-    # create passive cartpole (no ctrlr) diagram_context & cartpole context
     diagram_context = diagram.CreateDefaultContext()
+
+    '''
+    # create passive cartpole (no ctrlr) diagram_context & cartpole context
     cart_pole_context_passive = diagram.GetMutableSubsystemContext(cart_pole,
                                                            diagram_context)
     # set actuation port based on no controller cart_pole_context_passive
     cart_pole.get_actuation_input_port().FixValue(cart_pole_context_passive, 0)
+    '''
 
     # instantiate a simulator
     simulator = Simulator(diagram, diagram_context)
     simulator.set_publish_every_time_step(False) # speed up sim
-    simulator.set_target_realtime_rate(1.0)
+    simulator.set_target_realtime_rate(args.target_realtime_rate)
 
     # sim context, reset initial time & state
     sim_context = simulator.get_mutable_context()
@@ -207,8 +249,7 @@ def main():
 
     # run sim until simulator.AdvanceTo(n) seconds
     simulator.Initialize()
-    simulator.AdvanceTo(10.0)
-
+    simulator.AdvanceTo(args.simulation_time)
 
 
     exit(0)

@@ -356,7 +356,7 @@ class SwingUpAndBalanceController(VectorSystem):
         xbar[0] = wrap_to(xbar[0], 0, 2. * np.pi) - np.pi
 
         # If x'Sx <= 2, then use the LQR controller
-        if (xbar.dot(self.S.dot(xbar)) < 2.):
+        if (xbar.dot(self.S.dot(xbar)) < 2.): # if the cost-to-go is small enough use lqr
             output[:] = -self.K.dot(xbar)
         else:
             self.energy_shaping.get_input_port(0).FixValue(self.energy_shaping_context, pendulum_state)
