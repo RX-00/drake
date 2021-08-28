@@ -89,6 +89,15 @@ def main():
                     lqr.get_input_port(0))
     builder.Connect(lqr.get_output_port(0),
                     cart_pole.get_actuation_input_port())
+
+    # linearization of cart_pole sys to view K, S from lqr
+    lin_cart_pole = Linearize(cart_pole, cart_pole_context_,
+                              input_port_index=input_i, output_port_index=output_i)
+    (K, S) = LinearQuadraticRegulator(lin_cart_pole.A(), lin_cart_pole.B(),
+                                      Q=np.eye(4), R=np.eye(1))
+    print(K)
+    print(S)
+
     # ----------------------------------------------------------
 
 

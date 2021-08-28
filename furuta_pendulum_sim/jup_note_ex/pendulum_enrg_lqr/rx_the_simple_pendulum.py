@@ -377,6 +377,7 @@ visualizer.vis.delete()
 
 
 ax = PhasePlot(pendulum)
+
 saturation = builder.AddSystem(Saturation(min_value=[-3], max_value=[3]))
 builder.Connect(saturation.get_output_port(0), pendulum.get_input_port(0))
 controller = builder.AddSystem(SwingUpAndBalanceController(pendulum))

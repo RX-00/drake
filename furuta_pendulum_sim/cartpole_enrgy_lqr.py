@@ -39,7 +39,7 @@ TODO:
  [x] try a different visualizer (as seen in simple pendulum.py) than PoseBundle in cartpole_lqr.py
  [ ] test energy shaping controller
  [x] test lqr controller
- [ ] test energy shaping + lqr controller
+ [ ] test energy shaping + lqr controller -> HOOK UP THE ACTUATION PORTS
 
 '''
 
@@ -102,17 +102,13 @@ class BalancingLQRCtrlr():
     # TODO: need input_port, and output_port from
     #       input_i = cart_pole.get_actuation_input_port().get_index()
     #       output_i = cart_pole.get_state_output_port().get_index
-    def __init__(self, cart_pole, input_i, output_i, Q=np.eye(4), R=np.eye(1)):
-        self.cart_pole = cart_pole
+    def __init__(self, cart_pole, cart_pole_context, input_i, output_i, Q=np.eye(4), R=np.eye(1),
+                 x_star=[0., np.pi, 0., 0.]):
         self.Q = Q
         self.R = R
-        self.context = cart_pole.CreateDefaultContext()
-        self.cart_pole.get_actuation_input_port().FixValue(self.context, [0])
-        self.context.SetContinuousState([0, np.pi, 0, 0]) # upright pos w/ cart @ origin
-        # NOTE: might need to get the i/o ports for the systems to linearize
-        self.linearized_cart_pole = Linearize(self.cart_pole, self.context,
-                                              input_port_index=input_i,
-                                              output_port_index=output_i)
+
+        self.linearized_cart_pole = Linearize(cart_pole, cart_pole_context,
+                                              input_port_index=input_i, output_port_index=output_i)
 
     # lqr controller matrices (K ctrlr matrix, S Riccati eq matrix (used in optimal cost-to-go fxn))
     def get_LQR_matrices(self):
@@ -126,9 +122,12 @@ class BalancingLQRCtrlr():
 # with a simple state machine
 class SwingUpAndBalanceController(VectorSystem):
 
-    def __init__(self, cart_pole, input_i, ouput_i, Q, R, x_star):
+    def __init__(self, cart_pole, cart_pole_context, input_i, ouput_i, Q, R, x_star):
         VectorSystem.__init__(self, 4, 1)
-        (self.K, self.S) = BalancingLQRCtrlr(cart_pole, input_i, ouput_i, Q, R)
+
+        (self.K, self.S) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
+                                             input_i, ouput_i, Q, R, x_star).get_LQR_matrices()
+
         self.energy_shaping = EnergyShapingCtrlr(cart_pole, x_star)
         self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
 
@@ -212,10 +211,45 @@ def main():
     input_i = cart_pole.get_actuation_input_port().get_index()
     # cartpole state (x) output port
     output_i = cart_pole.get_state_output_port().get_index()
+
+    # set the ctrlr included cart_pole context
+    cart_pole_context = cart_pole.CreateDefaultContext()
+    # set the fixed point to linearize around in lqr
+    cart_pole_context.get_mutable_continuous_state_vector().SetFromVector(x_star)
+
+    cart_pole.get_actuation_input_port().FixValue(cart_pole_context, [0])
+
+    '''
+    Controller code setup & wiring up happens here
+    '''
+    saturation = builder.AddSystem(Saturation(min_value=[-3], max_value=[3])) # bound -3 to 3
+    #builder.Connect(u_saturation.get_output_port(0), cart_pole.get_input_port(0))
+    builder.Connect(saturation.get_output_port(0), cart_pole.get_actuation_input_port())
+
+    '''
+    # linearization of cart_pole sys to view K, S from lqr
+    lin_cart_pole = Linearize(cart_pole, cart_pole_context,
+                              input_port_index=input_i, output_port_index=output_i)
+    (K, S) = LinearQuadraticRegulator(lin_cart_pole.A(), lin_cart_pole.B(),
+                                      Q=np.eye(4), R=np.eye(1))
+    print(K)
+    print(S)
+    # ---------------------------------------------------
     '''
 
-    Controller code setup & wiring up happens here
+    controller = builder.AddSystem(SwingUpAndBalanceController(cart_pole, cart_pole_context,
+                                                               input_i, output_i,
+                                                               Q, R, x_star))
+    builder.Connect(cart_pole.get_output_port(0), controller.get_input_port(0))
+    builder.Connect(controller.get_output_port(0), saturation.get_input_port(0))
 
+    # A discrete sink block which logs its input to memory (not thread safe).
+    # This data is then retrievable (e.g. after a simulation) via a handful
+    # of accessor methods
+    logger = builder.AddSystem(SignalLogger(4))
+    builder.Connect(cart_pole.get_output_port(0), logger.get_input_port(0))
+    '''
+    ----------------------------------------------
     '''
 
 
@@ -240,22 +274,12 @@ def main():
     sim_context.SetTime(0.)
     sim_context.SetContinuousState([0, 0.1, 0, 0])
 
-    ''' NOTE: another way to set cartpole state
-    cart_slider = cart_pole.GetJointByName("CartSlider")
-    pole_pin = cart_pole.GetJointByName("PolePin")
-    cart_slider.set_translation(context=cart_pole_context, translation=0.)
-    pole_pin.set_angle(context=cart_pole_context, angle=2.)
-    '''
-
     # run sim until simulator.AdvanceTo(n) seconds
     simulator.Initialize()
     simulator.AdvanceTo(args.simulation_time)
 
 
     exit(0)
-
-
-
 
 
 
