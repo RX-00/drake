@@ -19,7 +19,8 @@ import argparse
 import matplotlib.pyplot as plt
 from copy import copy
 
-from pydrake.all import (Saturation, SignalLogger, wrap_to, VectorSystem, Linearize)
+from pydrake.all import (Saturation, SignalLogger, wrap_to, VectorSystem,
+                         AffineSystem, Linearize)
 
 from pydrake.common import FindResourceOrThrow
 from pydrake.common import temp_directory
@@ -90,8 +91,9 @@ class EnergyShapingCtrlr(VectorSystem):
         # a PD controller to regulate the cart
         output[:] = (k_E * thetadot * np.cos(theta) * (total_energy - self.desired_energy) -
                      k_p * x -
-                     k_d * xdot +
-                     params.damping() * thetadot) # damping term
+                     k_d * xdot)
+                     #+
+                     #params.damping() * thetadot) # damping term
 
 
 # LQR controller class (to better organize and consolidate the weight matrices, Q, R)
@@ -120,7 +122,9 @@ class BalancingLQRCtrlr():
 
 # Combined Energy Shaping (SwingUp) and LQR (Balance) Controller
 # with a simple state machine
-class SwingUpAndBalanceController(VectorSystem):
+# NOTE: This is an extension of the VectorSystem class and thus does not
+#       mix with abstract-valued ports like geometrically defined systems
+class SwingUpAndBalanceController_VecSys(VectorSystem):
 
     def __init__(self, cart_pole, cart_pole_context, input_i, ouput_i, Q, R, x_star):
         VectorSystem.__init__(self, 4, 1)
@@ -131,6 +135,42 @@ class SwingUpAndBalanceController(VectorSystem):
         self.energy_shaping = EnergyShapingCtrlr(cart_pole, x_star)
         self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
 
+    def DoCalcVectorOutput(self, context, cart_pole_state, unused, ouput):
+        # xbar = x - x_star, i.e. xbar is the difference b/w current state and fixed point
+        xbar = copy(cart_pole_state)
+        # wrap_to(value: float, low: float, high: float) -> float
+        #     For variables that are meant to be periodic, (e.g. over a 2π interval), wraps
+        #     value into the interval [low, high). Precisely, wrap_to returns:
+        #     value + k*(high-low) for the unique integer value k that lands the output
+        #     in the desired interval. low and high must be finite, and low < high.
+        xbar[1] = wrap_to(xbar[1], 0, 2.0*np.pi) - np.pi # theta
+
+        # If x'Sx <= 2, then use LQR ctrlr. Cost-to-go J_star = x^T * S * x
+        if (xbar.dot(self.S.dot(xbar)) < 2.0):
+            output[:] = -self.K.dot(xbar) # u = -Kx
+        else:
+            self.energy_shaping.get_input_port(0).FixValue(self.energy_shaping_context,
+                                                           cart_pole_state)
+            output[:] = self.energy_shaping.get_output_port(0).Eval(self.energy_shaping_context)
+
+
+
+# Combined Energy Shaping (SwingUp) and LQR (Balance) Controller
+# with a simple state machine
+class SwingUpAndBalanceController(AffineSystem):
+
+    def __init__(self, cart_pole, cart_pole_context, input_i, ouput_i, Q, R, x_star):
+        # TODO: figure out which sys class to extend and how to construct it
+        #AffineSystem.__init__(self)
+
+        (self.K, self.S) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
+                                             input_i, ouput_i, Q, R, x_star).get_LQR_matrices()
+
+        self.energy_shaping = EnergyShapingCtrlr(cart_pole, x_star)
+        self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
+
+    # TODO: figure out what this output should be if not vector
+    #       and what function from what class should it override
     def DoCalcVectorOutput(self, context, cart_pole_state, unused, ouput):
         # xbar = x - x_star, i.e. xbar is the difference b/w current state and fixed point
         xbar = copy(cart_pole_state)
@@ -226,17 +266,6 @@ def main():
     #builder.Connect(u_saturation.get_output_port(0), cart_pole.get_input_port(0))
     builder.Connect(saturation.get_output_port(0), cart_pole.get_actuation_input_port())
 
-    '''
-    # linearization of cart_pole sys to view K, S from lqr
-    lin_cart_pole = Linearize(cart_pole, cart_pole_context,
-                              input_port_index=input_i, output_port_index=output_i)
-    (K, S) = LinearQuadraticRegulator(lin_cart_pole.A(), lin_cart_pole.B(),
-                                      Q=np.eye(4), R=np.eye(1))
-    print(K)
-    print(S)
-    # ---------------------------------------------------
-    '''
-
     controller = builder.AddSystem(SwingUpAndBalanceController(cart_pole, cart_pole_context,
                                                                input_i, output_i,
                                                                Q, R, x_star))
@@ -246,8 +275,8 @@ def main():
     # A discrete sink block which logs its input to memory (not thread safe).
     # This data is then retrievable (e.g. after a simulation) via a handful
     # of accessor methods
-    logger = builder.AddSystem(SignalLogger(4))
-    builder.Connect(cart_pole.get_output_port(0), logger.get_input_port(0))
+    #logger = builder.AddSystem(SignalLogger(4))
+    #builder.Connect(cart_pole.get_output_port(0), logger.get_input_port(0))
     '''
     ----------------------------------------------
     '''
