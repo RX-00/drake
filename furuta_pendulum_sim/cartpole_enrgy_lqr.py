@@ -21,7 +21,7 @@ from copy import copy
 
 from pydrake.all import (Saturation, SignalLogger, wrap_to, VectorSystem, AbstractValue,
                          LeafSystem, System, LinearSystem, Linearize, BasicVector, FramePoseVector)
-
+from pydrake.common.containers import namedview
 from pydrake.common import FindResourceOrThrow
 from pydrake.common import temp_directory
 from pydrake.geometry import (DrakeVisualizer, SceneGraph)
@@ -43,6 +43,10 @@ TODO:
  [ ] test energy shaping + lqr controller -> HOOK UP THE ACTUATION PORTS
 
 '''
+
+
+CartpoleState = namedview(
+    "CartpoleState", ["x", "theta", "xdot", "thetadot"])
 
 
 
@@ -169,7 +173,7 @@ class SwingUpAndBalanceController(LeafSystem):
         LeafSystem.__init__(self)
         self.DeclareAbstractInputPort("state_input", AbstractValue.Make(FramePoseVector()))
         self.DeclareVectorOutputPort("control_signal", BasicVector(1),
-                                       self.CopyStateOut)
+                                       self.OutputControlSignal)
         (self.K, self.S) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
                                              input_i, ouput_i, Q, R, x_star).get_LQR_matrices()
         (self.A, self.B, self.C, self.D) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
@@ -178,27 +182,8 @@ class SwingUpAndBalanceController(LeafSystem):
         self.energy_shaping = EnergyShapingCtrlr(cart_pole, x_star)
         self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
 
-    def CopyStateOut(self, context, output):
-        x = context.get_continuous_state_vector().CopyToVector()
-        y = output.SetFromVector(x)
-
-    def CalcOutput(self, context, cart_pole_state, ouput):
-        # xbar = x - x_star, i.e. xbar is the difference b/w current state and fixed point
-        xbar = copy(cart_pole_state)
-        # wrap_to(value: float, low: float, high: float) -> float
-        #     For variables that are meant to be periodic, (e.g. over a 2π interval), wraps
-        #     value into the interval [low, high). Precisely, wrap_to returns:
-        #     value + k*(high-low) for the unique integer value k that lands the output
-        #     in the desired interval. low and high must be finite, and low < high.
-        xbar[1] = wrap_to(xbar[1], 0, 2.0*np.pi) - np.pi # theta
-
-        # If x'Sx <= 2, then use LQR ctrlr. Cost-to-go J_star = x^T * S * x
-        if (xbar.dot(self.S.dot(xbar)) < 2.0):
-            output[:] = -self.K.dot(xbar) # u = -Kx
-        else:
-            self.energy_shaping.get_input_port(0).FixValue(self.energy_shaping_context,
-                                                           cart_pole_state)
-            output[:] = self.energy_shaping.get_output_port(0).Eval(self.energy_shaping_context)
+    def OutputControlSignal(self, context, output):
+        output.set_value(np.array([[100]]))
 
 
 
