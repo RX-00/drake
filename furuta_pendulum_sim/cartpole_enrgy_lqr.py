@@ -198,7 +198,7 @@ class SwingUpAndBalanceController(LeafSystem):
 
         # If x'Sx <= 2, then use LQR ctrlr. Cost-to-go J_star = x^T * S * x
         threshold = np.array([2.0])
-        if (xbar_.dot(self.S.dot(xbar_)) < 2):
+        if (xbar_.dot(self.S.dot(xbar_)) < 2.0):
             #output[:] = -self.K.dot(xbar_) # u = -Kx
             output.set_value(-self.K.dot(xbar_))
         else:
