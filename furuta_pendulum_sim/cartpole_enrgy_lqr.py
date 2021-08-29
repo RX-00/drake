@@ -173,7 +173,7 @@ class SwingUpAndBalanceController(LeafSystem):
         LeafSystem.__init__(self)
         self.DeclareAbstractInputPort("state_input", AbstractValue.Make(FramePoseVector()))
         self.DeclareVectorOutputPort("control_signal", BasicVector(1),
-                                       self.OutputControlSignal)
+                                     self.OutputControlSignal)
         (self.K, self.S) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
                                              input_i, ouput_i, Q, R, x_star).get_LQR_matrices()
         (self.A, self.B, self.C, self.D) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
@@ -181,9 +181,33 @@ class SwingUpAndBalanceController(LeafSystem):
                                                              Q, R, x_star).get_lin_matrices()
         self.energy_shaping = EnergyShapingCtrlr(cart_pole, x_star)
         self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
+        self.cart_pole_context = cart_pole_context
 
     def OutputControlSignal(self, context, output):
-        output.set_value(np.array([[100]]))
+        #xbar = self.cart_pole_context.get_continuous_state_vector().CopyToVector()
+        xbar = copy(self.cart_pole_context.get_continuous_state_vector())
+        #xbar = copy(context.get_continuous_state_vector())
+        #print(xbar)
+        xbar_ = np.array([xbar[0], xbar[1], xbar[2], xbar[3]])
+        #print(xbar)
+        xbar_[1] = wrap_to(xbar_[1], 0, 2.0*np.pi) - np.pi
+
+        #print(self.S * 2)
+
+        #output.set_value(np.array([[1]]))
+
+        # If x'Sx <= 2, then use LQR ctrlr. Cost-to-go J_star = x^T * S * x
+        threshold = np.array([2.0])
+        if (xbar_.dot(self.S.dot(xbar_)) < 2):
+            #output[:] = -self.K.dot(xbar_) # u = -Kx
+            output.set_value(-self.K.dot(xbar_))
+        else:
+            self.energy_shaping.get_input_port(0).FixValue(self.energy_shaping_context,
+                                                          self.cart_pole_context.get_continuous_state_vector())
+            output_val = self.energy_shaping.get_output_port(0).Eval(self.energy_shaping_context)
+            output.set_value(output_val)
+
+        print(output)
 
 
 
@@ -288,7 +312,7 @@ def main():
     # sim context, reset initial time & state
     sim_context = simulator.get_mutable_context()
     sim_context.SetTime(0.)
-    sim_context.SetContinuousState([0, 0.1, 0, 0])
+    sim_context.SetContinuousState([0, np.pi + 0.1, 0, 0])
 
     # run sim until simulator.AdvanceTo(n) seconds
     simulator.Initialize()
