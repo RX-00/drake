@@ -19,8 +19,8 @@ import argparse
 import matplotlib.pyplot as plt
 from copy import copy
 
-from pydrake.all import (Saturation, SignalLogger, wrap_to, VectorSystem,
-                         AffineSystem, Linearize)
+from pydrake.all import (Saturation, SignalLogger, wrap_to, VectorSystem, AbstractValue,
+                         LeafSystem, System, LinearSystem, Linearize, BasicVector, FramePoseVector)
 
 from pydrake.common import FindResourceOrThrow
 from pydrake.common import temp_directory
@@ -118,6 +118,12 @@ class BalancingLQRCtrlr():
                                           self.linearized_cart_pole.B(), self.Q, self.R)
         return (K, S)
 
+    def get_lin_matrices(self):
+        A = self.linearized_cart_pole.A()
+        B = self.linearized_cart_pole.B()
+        C = self.linearized_cart_pole.C()
+        D = self.linearized_cart_pole.D()
+        return (A, B, C, D)
 
 
 # Combined Energy Shaping (SwingUp) and LQR (Balance) Controller
@@ -157,21 +163,26 @@ class SwingUpAndBalanceController_VecSys(VectorSystem):
 
 # Combined Energy Shaping (SwingUp) and LQR (Balance) Controller
 # with a simple state machine
-class SwingUpAndBalanceController(AffineSystem):
+class SwingUpAndBalanceController(LeafSystem):
 
     def __init__(self, cart_pole, cart_pole_context, input_i, ouput_i, Q, R, x_star):
-        # TODO: figure out which sys class to extend and how to construct it
-        #AffineSystem.__init__(self)
-
+        LeafSystem.__init__(self)
+        self.DeclareAbstractInputPort("state_input", AbstractValue.Make(FramePoseVector()))
+        self.DeclareVectorOutputPort("control_signal", BasicVector(1),
+                                       self.CopyStateOut)
         (self.K, self.S) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
                                              input_i, ouput_i, Q, R, x_star).get_LQR_matrices()
-
+        (self.A, self.B, self.C, self.D) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
+                                                             input_i, ouput_i,
+                                                             Q, R, x_star).get_lin_matrices()
         self.energy_shaping = EnergyShapingCtrlr(cart_pole, x_star)
         self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
 
-    # TODO: figure out what this output should be if not vector
-    #       and what function from what class should it override
-    def DoCalcVectorOutput(self, context, cart_pole_state, unused, ouput):
+    def CopyStateOut(self, context, output):
+        x = context.get_continuous_state_vector().CopyToVector()
+        y = output.SetFromVector(x)
+
+    def CalcOutput(self, context, cart_pole_state, ouput):
         # xbar = x - x_star, i.e. xbar is the difference b/w current state and fixed point
         xbar = copy(cart_pole_state)
         # wrap_to(value: float, low: float, high: float) -> float
@@ -188,7 +199,6 @@ class SwingUpAndBalanceController(AffineSystem):
             self.energy_shaping.get_input_port(0).FixValue(self.energy_shaping_context,
                                                            cart_pole_state)
             output[:] = self.energy_shaping.get_output_port(0).Eval(self.energy_shaping_context)
-
 
 
 
@@ -284,14 +294,6 @@ def main():
 
     diagram = builder.Build() # done defining & hooking up the system
     diagram_context = diagram.CreateDefaultContext()
-
-    '''
-    # create passive cartpole (no ctrlr) diagram_context & cartpole context
-    cart_pole_context_passive = diagram.GetMutableSubsystemContext(cart_pole,
-                                                           diagram_context)
-    # set actuation port based on no controller cart_pole_context_passive
-    cart_pole.get_actuation_input_port().FixValue(cart_pole_context_passive, 0)
-    '''
 
     # instantiate a simulator
     simulator = Simulator(diagram, diagram_context)
