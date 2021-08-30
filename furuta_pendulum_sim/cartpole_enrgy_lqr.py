@@ -98,6 +98,8 @@ class EnergyShapingCtrlr(VectorSystem):
                      k_d * xdot)
                      #+
                      #params.damping() * thetadot) # damping term
+        output[:] = output[:] * 100 # NOTE: not sure why I need this
+        print(output)
 
 
 # LQR controller class (to better organize and consolidate the weight matrices, Q, R)
@@ -154,7 +156,9 @@ class SwingUpAndBalanceController_VecSys(VectorSystem):
         #     value + k*(high-low) for the unique integer value k that lands the output
         #     in the desired interval. low and high must be finite, and low < high.
         xbar[1] = wrap_to(xbar[1], 0, 2.0*np.pi) - np.pi # theta
-
+        print(xbar)
+        output = np.array([100])
+        print("test")
         # If x'Sx <= 2, then use LQR ctrlr. Cost-to-go J_star = x^T * S * x
         if (xbar.dot(self.S.dot(xbar)) < 2.0):
             output[:] = -self.K.dot(xbar) # u = -Kx
@@ -171,9 +175,10 @@ class SwingUpAndBalanceController(LeafSystem):
 
     def __init__(self, cart_pole, cart_pole_context, input_i, ouput_i, Q, R, x_star):
         LeafSystem.__init__(self)
-        self.DeclareAbstractInputPort("state_input", AbstractValue.Make(FramePoseVector()))
+        self.DeclareVectorInputPort("state", BasicVector(4))
+        # since this is a controller and not a dynamic system, don't need DeclareContinuousState
         self.DeclareVectorOutputPort("control_signal", BasicVector(1),
-                                     self.OutputControlSignal)
+                                     self.CopyStateOut)
         (self.K, self.S) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
                                              input_i, ouput_i, Q, R, x_star).get_LQR_matrices()
         (self.A, self.B, self.C, self.D) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
@@ -183,10 +188,8 @@ class SwingUpAndBalanceController(LeafSystem):
         self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
         self.cart_pole_context = cart_pole_context
 
-    def OutputControlSignal(self, context, output):
-        xbar = copy(self.cart_pole_context.get_continuous_state_vector())
-        #xbar = copy(context.get_continuous_state_vector())
-        xbar_ = np.array([xbar[0], xbar[1], xbar[2], xbar[3]])
+    def CopyStateOut(self, context, output):
+        xbar_ = context.get_continuous_state_vector().CopyToVector()
         xbar_[1] = wrap_to(xbar_[1], 0, 2.0*np.pi) - np.pi
 
         # If x'Sx <= 2, then use LQR ctrlr. Cost-to-go J_star = x^T * S * x
@@ -274,15 +277,18 @@ def main():
     '''
     Controller code setup & wiring up happens here
     '''
-    saturation = builder.AddSystem(Saturation(min_value=[-3], max_value=[3])) # bound -3 to 3
+    #saturation = builder.AddSystem(Saturation(min_value=[-10000], max_value=[10000])) # bound -N to N
     #builder.Connect(u_saturation.get_output_port(0), cart_pole.get_input_port(0))
-    builder.Connect(saturation.get_output_port(0), cart_pole.get_actuation_input_port())
+    #builder.Connect(saturation.get_output_port(0), cart_pole.get_actuation_input_port())
 
-    controller = builder.AddSystem(SwingUpAndBalanceController(cart_pole, cart_pole_context,
-                                                               input_i, output_i,
-                                                               Q, R, x_star))
-    builder.Connect(cart_pole.get_output_port(0), controller.get_input_port(0))
-    builder.Connect(controller.get_output_port(0), saturation.get_input_port(0))
+    #controller = builder.AddSystem(SwingUpAndBalanceController_VecSys(cart_pole, cart_pole_context,
+    #                                                           input_i, output_i,
+    #                                                           Q, R, x_star))
+    controller = builder.AddSystem(EnergyShapingCtrlr(cart_pole, x_star))
+    # NOTE: need to use MultibodyPlant.get_state_output_port() for connecting to controllers!!
+    builder.Connect(cart_pole.get_state_output_port(), controller.get_input_port(0))
+    #builder.Connect(controller.get_output_port(0), saturation.get_input_port(0))
+    builder.Connect(controller.get_output_port(0), cart_pole.get_actuation_input_port())
 
     # A discrete sink block which logs its input to memory (not thread safe).
     # This data is then retrievable (e.g. after a simulation) via a handful
@@ -305,7 +311,7 @@ def main():
     # sim context, reset initial time & state
     sim_context = simulator.get_mutable_context()
     sim_context.SetTime(0.)
-    sim_context.SetContinuousState([0, np.pi + 0.1, 0, 0])
+    sim_context.SetContinuousState([0, 0 + 0.1, 0, 0])
 
     # run sim until simulator.AdvanceTo(n) seconds
     simulator.Initialize()
