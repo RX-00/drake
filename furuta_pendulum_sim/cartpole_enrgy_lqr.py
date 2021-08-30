@@ -98,8 +98,8 @@ class EnergyShapingCtrlr(VectorSystem):
                      k_d * xdot)
                      #+
                      #params.damping() * thetadot) # damping term
-        output[:] = output[:] * 100 # NOTE: not sure why I need this
-        print(output)
+        output[:] = output[:] * 50 # NOTE: not sure why I need this
+        #print(output)
 
 
 # LQR controller class (to better organize and consolidate the weight matrices, Q, R)
@@ -141,13 +141,25 @@ class SwingUpAndBalanceController_VecSys(VectorSystem):
     def __init__(self, cart_pole, cart_pole_context, input_i, ouput_i, Q, R, x_star):
         VectorSystem.__init__(self, 4, 1)
 
+        self.cart_pole = cart_pole
+        self.cart_pole_context = cart_pole.CreateDefaultContext()
+        self.SetCartPoleParams(x_star)
         (self.K, self.S) = BalancingLQRCtrlr(cart_pole, cart_pole_context,
                                              input_i, ouput_i, Q, R, x_star).get_LQR_matrices()
 
         self.energy_shaping = EnergyShapingCtrlr(cart_pole, x_star)
         self.energy_shaping_context = self.energy_shaping.CreateDefaultContext()
+        self.x_star = x_star
 
-    def DoCalcVectorOutput(self, context, cart_pole_state, unused, ouput):
+    def SetCartPoleParams(self, x_star):
+        # setting params
+        self.cart_pole_context.get_mutable_continuous_state_vector().SetFromVector(x_star)
+        # upright state w/ cart back at origin
+        self.cart_pole_context.SetContinuousState([0, np.pi, 0, 0])
+        # energy at upright state w/ cart back at origin
+        self.desired_energy = self.cart_pole.EvalPotentialEnergy(self.cart_pole_context)
+
+    def DoCalcVectorOutput(self, context, cart_pole_state, unused, output):
         # xbar = x - x_star, i.e. xbar is the difference b/w current state and fixed point
         xbar = copy(cart_pole_state)
         # wrap_to(value: float, low: float, high: float) -> float
@@ -156,11 +168,11 @@ class SwingUpAndBalanceController_VecSys(VectorSystem):
         #     value + k*(high-low) for the unique integer value k that lands the output
         #     in the desired interval. low and high must be finite, and low < high.
         xbar[1] = wrap_to(xbar[1], 0, 2.0*np.pi) - np.pi # theta
-        print(xbar)
-        output = np.array([100])
-        print("test")
+
         # If x'Sx <= 2, then use LQR ctrlr. Cost-to-go J_star = x^T * S * x
-        if (xbar.dot(self.S.dot(xbar)) < 2.0):
+        print(xbar.dot(self.S.dot(xbar)))
+        if (xbar.dot(self.S.dot(xbar)) < 20.):
+            print("LQR")
             output[:] = -self.K.dot(xbar) # u = -Kx
         else:
             self.energy_shaping.get_input_port(0).FixValue(self.energy_shaping_context,
@@ -232,6 +244,7 @@ def main():
 
     sdf_path = FindResourceOrThrow(
         "drake/examples/multibody/cart_pole/cart_pole.sdf")
+    #sdf_path = FindResourceOrThrow("drake/examples/pendulum/Pendulum.urdf")
 
     builder = DiagramBuilder()
     cart_pole = builder.AddSystem(MultibodyPlant(time_step=args.time_step))
@@ -281,10 +294,9 @@ def main():
     #builder.Connect(u_saturation.get_output_port(0), cart_pole.get_input_port(0))
     #builder.Connect(saturation.get_output_port(0), cart_pole.get_actuation_input_port())
 
-    #controller = builder.AddSystem(SwingUpAndBalanceController_VecSys(cart_pole, cart_pole_context,
-    #                                                           input_i, output_i,
-    #                                                           Q, R, x_star))
-    controller = builder.AddSystem(EnergyShapingCtrlr(cart_pole, x_star))
+    controller = builder.AddSystem(SwingUpAndBalanceController_VecSys(cart_pole, cart_pole_context,
+                                                               input_i, output_i,
+                                                               Q, R, x_star))
     # NOTE: need to use MultibodyPlant.get_state_output_port() for connecting to controllers!!
     builder.Connect(cart_pole.get_state_output_port(), controller.get_input_port(0))
     #builder.Connect(controller.get_output_port(0), saturation.get_input_port(0))
@@ -311,7 +323,95 @@ def main():
     # sim context, reset initial time & state
     sim_context = simulator.get_mutable_context()
     sim_context.SetTime(0.)
-    sim_context.SetContinuousState([0, 0 + 0.1, 0, 0])
+    sim_context.SetContinuousState([0.5, 0.2, 0, 0.1])
+
+    # run sim until simulator.AdvanceTo(n) seconds
+    simulator.Initialize()
+    simulator.AdvanceTo(args.simulation_time)
+
+
+    exit(0)
+
+
+
+def main_energy_shaping():
+    args = arg_parse()
+
+    sdf_path = FindResourceOrThrow(
+        "drake/examples/multibody/cart_pole/cart_pole.sdf")
+
+    builder = DiagramBuilder()
+    cart_pole = builder.AddSystem(MultibodyPlant(time_step=args.time_step))
+    scene_graph = builder.AddSystem(SceneGraph()) # visualization & collision checking tool
+    cart_pole.RegisterAsSourceForSceneGraph(scene_graph)
+    Parser(plant=cart_pole).AddModelFromFile(sdf_path)
+
+    # LQR weights
+    Q = np.eye(4)
+    R = np.eye(1)
+    # fixed (unstable) equilibrium point
+    x_star = [0., np.pi, 0., 0.]
+
+    # users must call Finalize() after making any additions to the multibody plant and
+    # before using this class in the Systems framework, e.g. diagram = builder.Build()
+    cart_pole.Finalize()
+    assert cart_pole.geometry_source_is_registered() # NOTE: don't know if need this
+
+    # wire up scene_graph and cart_pole geometry
+    builder.Connect(
+        scene_graph.get_query_output_port(),
+        cart_pole.get_geometry_query_input_port())
+    builder.Connect(
+        cart_pole.get_geometry_poses_output_port(),
+        scene_graph.get_source_pose_port(cart_pole.get_source_id()))
+
+    # hookup //tools:drake_visualizer
+    DrakeVisualizer.AddToBuilder(builder=builder,
+                                 scene_graph=scene_graph)
+
+    # cartpole actuation (u) input port
+    input_i = cart_pole.get_actuation_input_port().get_index()
+    # cartpole state (x) output port
+    output_i = cart_pole.get_state_output_port().get_index()
+
+    # set the ctrlr included cart_pole context
+    cart_pole_context = cart_pole.CreateDefaultContext()
+    # set the fixed point to linearize around in lqr
+    cart_pole_context.get_mutable_continuous_state_vector().SetFromVector(x_star)
+
+    cart_pole.get_actuation_input_port().FixValue(cart_pole_context, [0])
+
+    '''
+    Controller code setup & wiring up happens here
+    '''
+    controller = builder.AddSystem(EnergyShapingCtrlr(cart_pole, x_star))
+    # NOTE: need to use MultibodyPlant.get_state_output_port() for connecting to controllers!!
+    builder.Connect(cart_pole.get_state_output_port(), controller.get_input_port(0))
+    #builder.Connect(controller.get_output_port(0), saturation.get_input_port(0))
+    builder.Connect(controller.get_output_port(0), cart_pole.get_actuation_input_port())
+
+    # A discrete sink block which logs its input to memory (not thread safe).
+    # This data is then retrievable (e.g. after a simulation) via a handful
+    # of accessor methods
+    #logger = builder.AddSystem(SignalLogger(4))
+    #builder.Connect(cart_pole.get_state_output_port(0), logger.get_input_port(0))
+    '''
+    ----------------------------------------------
+    '''
+
+
+    diagram = builder.Build() # done defining & hooking up the system
+    diagram_context = diagram.CreateDefaultContext()
+
+    # instantiate a simulator
+    simulator = Simulator(diagram, diagram_context)
+    simulator.set_publish_every_time_step(False) # speed up sim
+    simulator.set_target_realtime_rate(args.target_realtime_rate)
+
+    # sim context, reset initial time & state
+    sim_context = simulator.get_mutable_context()
+    sim_context.SetTime(0.)
+    sim_context.SetContinuousState([0, 0.1, 0, 0])
 
     # run sim until simulator.AdvanceTo(n) seconds
     simulator.Initialize()
