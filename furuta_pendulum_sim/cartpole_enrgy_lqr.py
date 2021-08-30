@@ -1,7 +1,7 @@
 #!/usr/bin/python3 -B
 
 '''
-PyDrake simulation of a 3D with a
+PyDrake simulation of a 3D cartpole with a
 LQR controller and energy shaping controller
 and a state machine
 
@@ -14,7 +14,6 @@ state vector: [x, theta, xdot, thetadot]
 '''
 
 import numpy as np
-import meshcat
 import argparse
 import matplotlib.pyplot as plt
 from copy import copy
@@ -98,8 +97,7 @@ class EnergyShapingCtrlr(VectorSystem):
                      k_d * xdot)
                      #+
                      #params.damping() * thetadot) # damping term
-        output[:] = output[:] * 50 # NOTE: not sure why I need this
-        #print(output)
+        output[:] = output[:] * 50 # NOTE: gain to increase signal magnitude
 
 
 # LQR controller class (to better organize and consolidate the weight matrices, Q, R)
